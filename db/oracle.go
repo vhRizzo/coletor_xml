@@ -2,11 +2,11 @@ package db
 
 import (
 	"coletor_xml/config"
+	"log"
 
 	"database/sql"
-	"fmt"
 
-	_ "github.com/sijms/go-ora/v2"
+	go_ora "github.com/sijms/go-ora/v2"
 )
 
 type UsuarioEmail struct {
@@ -23,8 +23,14 @@ type UsuarioEmail struct {
 }
 
 func ConnectOracle(cfg config.Config) (*sql.DB, error) {
-	url := fmt.Sprintf("oracle://%s:%s@%s:%s/%s",
-		cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBService)
+	urlOptions := map[string]string{
+		"SID": cfg.DBService,
+	}
+	url := go_ora.BuildUrl(cfg.DBHost, cfg.DBPort, "", cfg.DBUser, cfg.DBPassword, urlOptions)
+
+	if cfg.Debug {
+		log.Printf("url montada com os dados salvos: %s", url)
+	}
 	return sql.Open("oracle", url)
 }
 

@@ -41,16 +41,22 @@ func ProcessarMensagem(msg *mail.Message, db *sql.DB, cfg config.Config, usuario
 	header := msg.Header
 	subject := header.Get("Subject")
 	from := header.Get("From")
-	log.Printf("processando mensagem de [%s]", from)
+	if cfg.Debug {
+		log.Printf("processando mensagem de [%s]", from)
+	}
 
 	date, err := header.Date()
 	if err != nil {
-		log.Printf("[%s] Data inválida na mensagem: %v", usuario.Usuario, err)
+		if cfg.Debug {
+			log.Printf("[%s] Data inválida na mensagem: %v", usuario.Usuario, err)
+		}
 		date = time.Now()
 	}
 
 	if date.Year() < 2025 {
-		log.Printf("[%s] Mensagem antiga (%s). Processando arquivamento.", usuario.Usuario, date)
+		if cfg.Debug {
+			log.Printf("[%s] Mensagem antiga (%s). Processando arquivamento.", usuario.Usuario, date)
+		}
 		return handleOldMessage(usuario.Protocolo)
 	}
 
@@ -82,7 +88,9 @@ func ProcessarMensagem(msg *mail.Message, db *sql.DB, cfg config.Config, usuario
 			// É um anexo XML.
 			xmlContent, err := io.ReadAll(io.LimitReader(p, maxDataSize))
 			if err != nil {
-				log.Printf("[%s] erro ao ler anexo XML: %v", usuario.Usuario, err)
+				if cfg.Debug {
+					log.Printf("[%s] erro ao ler anexo XML: %v", usuario.Usuario, err)
+				}
 				continue
 			}
 
@@ -92,45 +100,63 @@ func ProcessarMensagem(msg *mail.Message, db *sql.DB, cfg config.Config, usuario
 			// Heurística: Se o conteúdo não começa com '<' (indicando XML) mas começa com
 			// os caracteres de um XML em Base64, tentamos decodificar.
 			if !bytes.HasPrefix(trimmedContent, []byte("<")) && len(trimmedContent) > 0 {
-				log.Printf("anexo [%s] parece estar em Base64. Tentando decodificar manualmente...", filename)
+				if cfg.Debug {
+					log.Printf("anexo [%s] parece estar em Base64. Tentando decodificar manualmente...", filename)
+				}
 				decodedBytes, err := base64.StdEncoding.DecodeString(string(xmlContent))
 				if err != nil {
 					// Se a decodificação falhar, pode não ser Base64 afinal.
-					log.Printf("falha ao decodificar manualmente o anexo [%s]: %v. Prosseguindo com o conteúdo original.", filename, err)
+					if cfg.Debug {
+						log.Printf("falha ao decodificar manualmente o anexo [%s]: %v. Prosseguindo com o conteúdo original.", filename, err)
+					}
 					continue
 				}
 				// Se a decodificação for bem-sucedida, substitua o conteúdo original pelo decodificado.
-				log.Printf("anexo [%s] decodificado com sucesso.", filename)
+				if cfg.Debug {
+					log.Printf("anexo [%s] decodificado com sucesso.", filename)
+				}
 				xmlContent = decodedBytes
 			}
 			// Adiciona o XML válido à nossa lista para inserção posterior.
 			anexosValidos = append(anexosValidos, xmlAnexo{filename: filename, content: xmlContent})
 		} else if strings.HasPrefix(p.Header.Get("Content-Type"), "text/plain") && filename == "" {
 			// É a parte de texto do corpo do e-mail.
-			if decodedBody, err := decodePartBody(p); err == nil {
+			if decodedBody, err := decodePartBody(p, cfg); err == nil {
 				body = decodedBody
-				log.Println("corpo de texto da mensagem extraído e decodificado com sucesso.")
+				if cfg.Debug {
+					log.Println("corpo de texto da mensagem extraído e decodificado com sucesso.")
+				}
 				continue
 			}
-			log.Printf("[%s] erro ao decodificar a parte de texto do corpo: %v", usuario.Usuario, err)
+			if cfg.Debug {
+				log.Printf("[%s] erro ao decodificar a parte de texto do corpo: %v", usuario.Usuario, err)
+			}
 		}
 	}
 
 	// Segunda Passagem: Inserir os anexos válidos que coletamos.
 	if !cfg.Simulation {
 		if len(anexosValidos) == 0 {
-			log.Println("Nenhum anexo XML válido encontrado ou processado nesta mensagem.")
+			if cfg.Debug {
+				log.Println("Nenhum anexo XML válido encontrado ou processado nesta mensagem.")
+			}
 		}
 
 		for _, anexo := range anexosValidos {
-			log.Printf("inserindo anexo válido no banco: %s", anexo.filename)
+			if cfg.Debug {
+				log.Printf("inserindo anexo válido no banco: %s", anexo.filename)
+			}
 			if err := inserirXML(tx, from, subject, date, body, string(anexo.content), usuario); err != nil {
-				log.Printf("[%s] Erro no pipeline de inserção do XML [%s]: %v", usuario.Usuario, anexo.filename, err)
+				if cfg.Debug {
+					log.Printf("[%s] Erro no pipeline de inserção do XML [%s]: %v", usuario.Usuario, anexo.filename, err)
+				}
 				// Se uma inserção falhar, o defer tx.Rollback() irá reverter a transação inteira.
 				// Retornamos o erro para parar o processamento desta mensagem.
 				return err
 			}
-			log.Println("XML inserido com sucesso")
+			if cfg.Debug {
+				log.Println("XML inserido com sucesso")
+			}
 		}
 
 		if err := tx.Commit(); err != nil {
@@ -192,7 +218,7 @@ func truncateString(s string, length int) string {
 }
 
 // decodePartBody lê o corpo de uma parte MIME, detecta seu charset a partir dos cabeçalhos e o converte para uma string UTF-8.
-func decodePartBody(p *multipart.Part) (string, error) {
+func decodePartBody(p *multipart.Part, cfg config.Config) (string, error) {
 	// Pega o Content-Type para descobrir o charset
 	mediaType, params, err := mime.ParseMediaType(p.Header.Get("Content-Type"))
 	if err != nil {
@@ -217,7 +243,9 @@ func decodePartBody(p *multipart.Part) (string, error) {
 	encoding, err := ianaindex.IANA.Encoding(charset)
 	if err != nil {
 		// Se não encontrarmos um decodificador, logamos o aviso e tentamos ler como está.
-		log.Printf("charset desconhecido ou não suportado: %s. Tentando ler como fallback.", charset)
+		if cfg.Debug {
+			log.Printf("charset desconhecido ou não suportado: %s. Tentando ler como fallback.", charset)
+		}
 		bodyBytes, err := io.ReadAll(io.LimitReader(p, maxDataSize))
 		return string(bodyBytes), err
 	}

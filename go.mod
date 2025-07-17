@@ -7,6 +7,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/knadh/go-pop3 v1.0.0
 	github.com/sijms/go-ora/v2 v2.9.0
+	golang.org/x/sys v0.34.0
 	golang.org/x/text v0.27.0
 )
 

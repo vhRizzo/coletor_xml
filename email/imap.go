@@ -27,18 +27,26 @@ const (
 var sep string
 
 func MonitorarIMAP(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.DB) {
-	log.Printf("iniciando monitoramento para %s", u.Usuario)
+	if cfg.Debug {
+		log.Printf("iniciando monitoramento para %s", u.Usuario)
+	}
 
 	retryInterval := initialRetryInterval
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("encerrando monitoramento para %s: contexto cancelado", u.Usuario)
+			if cfg.Debug {
+				log.Printf("encerrando monitoramento para %s: contexto cancelado", u.Usuario)
+			}
 		default:
 			if err := start(ctx, u, cfg, conn); err != nil {
-				log.Printf("erro no monitoramento de %s: %v", u.Usuario, err)
-				log.Printf("próxima tentativa em %v...", retryInterval)
+				if cfg.Debug {
+					log.Printf("erro no monitoramento de %s: %v", u.Usuario, err)
+				}
+				if cfg.Debug {
+					log.Printf("próxima tentativa em %v...", retryInterval)
+				}
 
 				time.Sleep(retryInterval)
 				retryInterval = min(retryInterval*2, maxRetryInterval)
@@ -46,7 +54,9 @@ func MonitorarIMAP(ctx context.Context, u db.UsuarioEmail, cfg config.Config, co
 				continue
 			}
 
-			log.Printf("[%s] ciclo de varredura concluído com sucesso.", u.Usuario)
+			if cfg.Debug {
+				log.Printf("[%s] ciclo de varredura concluído com sucesso.", u.Usuario)
+			}
 			retryInterval = initialRetryInterval
 
 			// Mover o IDLE para cá.
@@ -59,7 +69,9 @@ func start(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.
 	var c *client.Client
 	var err error
 
-	log.Printf("[%s] iniciando conexão com %s", u.Usuario, endereco)
+	if cfg.Debug {
+		log.Printf("[%s] iniciando conexão com %s", u.Usuario, endereco)
+	}
 	if strings.EqualFold(u.SSL, "S") {
 		c, err = client.DialTLS(endereco, nil)
 	} else {
@@ -73,24 +85,32 @@ func start(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.
 
 	c.Timeout = connectionTimeout
 
-	log.Printf("conexão estabelecida com sucesso\n[%s] realizando o login", u.Usuario)
+	if cfg.Debug {
+		log.Printf("conexão estabelecida com sucesso\n[%s] realizando o login", u.Usuario)
+	}
 	if err := c.Login(u.Usuario, u.Senha); err != nil {
 		return fmt.Errorf("falha no login: %w", err)
 	}
-	log.Println("login realizado com sucesso")
+	if cfg.Debug {
+		log.Println("login realizado com sucesso")
+	}
 
 	if err := createLidos(c, cfg); err != nil {
 		return fmt.Errorf("erro ao preparar a pasta '%s'", ignoreFolder)
 	}
 
-	log.Printf("[%s] iniciando varredura da caixa de entrada", u.Usuario)
+	if cfg.Debug {
+		log.Printf("[%s] iniciando varredura da caixa de entrada", u.Usuario)
+	}
 
 	inboxInfo := &imap.MailboxInfo{Name: "INBOX", Delimiter: sep}
 	if err := processMailbox(c, inboxInfo, cfg, conn, u); err != nil {
 		return fmt.Errorf("erro na varredura da INBOX: %w", err)
 	}
 
-	log.Printf("[%s] varredura inicial concluída. Entrando em modo IDLE.", u.Usuario)
+	if cfg.Debug {
+		log.Printf("[%s] varredura inicial concluída. Entrando em modo IDLE.", u.Usuario)
+	}
 
 	for {
 		// Verificamos o contexto a cada iteração do loop.
@@ -98,7 +118,9 @@ func start(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.
 			return context.Canceled
 		}
 
-		log.Printf("[%s] entrando em modo IDLE, aguardando novas mensagens...", u.Usuario)
+		if cfg.Debug {
+			log.Printf("[%s] entrando em modo IDLE, aguardando novas mensagens...", u.Usuario)
+		}
 
 		updates := make(chan client.Update, 1)
 		c.Updates = updates
@@ -113,9 +135,13 @@ func start(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.
 		case update := <-updates:
 			// Uma atualização chegou (ex: nova mensagem, mensagem apagada, etc.).
 			if mboxUpdate, ok := update.(*client.MailboxUpdate); ok {
-				log.Printf("[%s] atualização recebida na caixa de correio: %v. Re-escaneando INBOX.", u.Usuario, mboxUpdate.Mailbox.Name)
+				if cfg.Debug {
+					log.Printf("[%s] atualização recebida na caixa de correio: %v. Re-escaneando INBOX.", u.Usuario, mboxUpdate.Mailbox.Name)
+				}
 			} else {
-				log.Printf("[%s] atualização recebida (não é de caixa de correio): %T", u.Usuario, update)
+				if cfg.Debug {
+					log.Printf("[%s] atualização recebida (não é de caixa de correio): %T", u.Usuario, update)
+				}
 			}
 
 			// Pare o IDLE para podermos escanear.
@@ -139,12 +165,16 @@ func start(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.
 				return fmt.Errorf("conexão IDLE perdida: %w", err)
 			}
 			// Se o erro for nil, pode ter sido um stop gracioso.
-			log.Printf("[%s] conexão IDLE interrompida sem erros", u.Usuario)
+			if cfg.Debug {
+				log.Printf("[%s] conexão IDLE interrompida sem erros", u.Usuario)
+			}
 			// Podemos continuar o loop para re-entrar em IDLE.
 
 		case <-ctx.Done():
 			// O contexto da aplicação foi cancelado.
-			log.Printf("[%s] contexto cancelado, parando IDLE...", u.Usuario)
+			if cfg.Debug {
+				log.Printf("[%s] contexto cancelado, parando IDLE...", u.Usuario)
+			}
 			close(stopIdle)         // Tenta parar o IDLE graciosamente.
 			<-idleDone              // Espera ele terminar.
 			return context.Canceled // Retorna um erro específico para o contexto.
@@ -182,9 +212,13 @@ func createLidos(c *client.Client, cfg config.Config) error {
 			}
 		}
 
-		log.Printf("caixa de email [%s] criada com sucesso!", mboxName)
+		if cfg.Debug {
+			log.Printf("caixa de email [%s] criada com sucesso!", mboxName)
+		}
 	}
-	log.Println("caixa de email já existe, prosseguindo...")
+	if cfg.Debug {
+		log.Println("caixa de email já existe, prosseguindo...")
+	}
 
 	return nil
 }
@@ -214,14 +248,18 @@ func checkMailboxExists(c *client.Client, name string) (bool, error) {
 }
 
 func processMailbox(c *client.Client, mbox *imap.MailboxInfo, cfg config.Config, conn *sql.DB, u db.UsuarioEmail) error {
-	log.Printf("processando caixa de email [%s]", mbox.Name)
+	if cfg.Debug {
+		log.Printf("processando caixa de email [%s]", mbox.Name)
+	}
 
 	status, err := c.Select(mbox.Name, false)
 	if err != nil {
 		return fmt.Errorf("falha ao selecionar a caixa de email [%s]: %w", mbox.Name, err)
 	}
 	if status.Messages == 0 {
-		log.Printf("nenhuma mensagem na caixa [%s]", mbox.Name)
+		if cfg.Debug {
+			log.Printf("nenhuma mensagem na caixa [%s]", mbox.Name)
+		}
 		return nil
 	}
 
@@ -230,13 +268,17 @@ func processMailbox(c *client.Client, mbox *imap.MailboxInfo, cfg config.Config,
 		return fmt.Errorf("falha ao buscar os UIDs da caixa [%s]: %w", mbox.Name, err)
 	}
 	length := len(uids)
-	log.Printf("encontrados %d UIDs na caixa [%s].", length, mbox.Name)
+	if cfg.Debug {
+		log.Printf("encontrados %d UIDs na caixa [%s].", length, mbox.Name)
+	}
 
 	for i := 0; i < length; i += sliceSize {
 		end := min(i+sliceSize, length)
 
 		batchUids := uids[i:end]
-		log.Printf("processando lote %d/%d (UIDs %d a %d)", (i/sliceSize)+1, (length/sliceSize)+1, batchUids[0], batchUids[len(batchUids)-1])
+		if cfg.Debug {
+			log.Printf("processando lote %d/%d (UIDs %d a %d)", (i/sliceSize)+1, (length/sliceSize)+1, batchUids[0], batchUids[len(batchUids)-1])
+		}
 
 		batchSet := new(imap.SeqSet)
 		batchSet.AddNum(batchUids...)
@@ -260,7 +302,9 @@ func processMailbox(c *client.Client, mbox *imap.MailboxInfo, cfg config.Config,
 					break processLoop
 				}
 				if err := processMessage(msg, section, cfg, conn, u); err != nil {
-					log.Printf("falha ao processar UID %d: %v. Este lote será repetido se a conexão cair.", msg.Uid, err)
+					if cfg.Debug {
+						log.Printf("falha ao processar UID %d: %v. Este lote será repetido se a conexão cair.", msg.Uid, err)
+					}
 					// Podemos decidir se queremos parar o lote inteiro ou apenas pular a mensagem.
 					// Para simplificar, vamos parar o lote para forçar a repetição via loop de resiliência.
 					processingError = true
@@ -285,11 +329,15 @@ func processMailbox(c *client.Client, mbox *imap.MailboxInfo, cfg config.Config,
 			if err := c.UidMove(moveSet, "INBOX"+sep+ignoreFolder); err != nil {
 				return fmt.Errorf("erro ao mover lote de UIDs: %w", err)
 			}
-			log.Printf("lote de %d mensagens movido com sucesso.", len(uidsToMove))
+			if cfg.Debug {
+				log.Printf("lote de %d mensagens movido com sucesso.", len(uidsToMove))
+			}
 		}
 	}
 
-	log.Printf("varredura em lotes da caixa [%s] concluída com sucesso.", mbox.Name)
+	if cfg.Debug {
+		log.Printf("varredura em lotes da caixa [%s] concluída com sucesso.", mbox.Name)
+	}
 	return nil
 }
 
@@ -312,14 +360,18 @@ func processMessage(msg *imap.Message, section *imap.BodySectionName, cfg config
 
 	date, err := m.Header.Date()
 	if err != nil {
-		log.Printf("falha ao obter a data. Tratando como uma mensagem nova. %v", err)
+		if cfg.Debug {
+			log.Printf("falha ao obter a data. Tratando como uma mensagem nova. %v", err)
+		}
 		date = time.Now()
 	}
 
 	// Se a mensagem for antiga, simplesmente a ignore.
 	// Ela será adicionada à lista seqNumsToMove para ser movida.
 	if date.Year() < 2025 {
-		log.Printf("mensagem antiga (%s) do SeqNum %d será movida para %s.", date, msg.SeqNum, ignoreFolder)
+		if cfg.Debug {
+			log.Printf("mensagem antiga (%s) do SeqNum %d será movida para %s.", date, msg.SeqNum, ignoreFolder)
+		}
 		return nil // Retornar nil significa que o "processamento" (a decisão de mover) foi um sucesso.
 	}
 
@@ -328,7 +380,9 @@ func processMessage(msg *imap.Message, section *imap.BodySectionName, cfg config
 	}
 
 	if cfg.Simulation {
-		log.Printf("[SIMULAÇÃO] mensagem %d processada com sucesso!", msg.SeqNum)
+		if cfg.Debug {
+			log.Printf("[SIMULAÇÃO] mensagem %d processada com sucesso!", msg.SeqNum)
+		}
 	}
 
 	return nil
