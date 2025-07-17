@@ -1,0 +1,27 @@
+services:
+  coletor-xml:
+    build: .
+    image: coletor-xml:latest
+    container_name: coletor_xml
+    restart: always
+    secrets:
+      - db_host
+      - db_password
+      - db_port
+      - db_service
+      - db_user
+      - simulation
+
+secrets:
+  db_host:
+    file: ./secrets/db_host.txt
+  db_password:
+    file: ./secrets/db_password.txt
+  db_port:
+    file: ./secrets/db_port.txt
+  db_service:
+    file: ./secrets/db_service.txt
+  db_user:
+    file: ./secrets/db_user.txt
+  simulation:
+    file: ./secrets/simulation.txt
