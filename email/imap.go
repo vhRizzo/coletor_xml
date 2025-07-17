@@ -83,8 +83,11 @@ func start(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.
 		return fmt.Errorf("erro ao preparar a pasta '%s'", ignoreFolder)
 	}
 
-	if err := initialScan(c, cfg, conn, u); err != nil {
-		return fmt.Errorf("erro na varredura inicial: %w", err)
+	log.Printf("[%s] iniciando varredura da caixa de entrada", u.Usuario)
+
+	inboxInfo := &imap.MailboxInfo{Name: "INBOX", Delimiter: sep}
+	if err := processMailbox(c, inboxInfo, cfg, conn, u); err != nil {
+		return fmt.Errorf("erro na varredura da INBOX: %w", err)
 	}
 
 	log.Printf("[%s] varredura inicial concluída. Entrando em modo IDLE.", u.Usuario)
@@ -208,35 +211,6 @@ func checkMailboxExists(c *client.Client, name string) (bool, error) {
 	}
 
 	return exists, nil
-}
-
-func initialScan(c *client.Client, cfg config.Config, conn *sql.DB, u db.UsuarioEmail) error {
-	var mailboxes []*imap.MailboxInfo
-
-	mboxChan := make(chan *imap.MailboxInfo, 10)
-	done := make(chan error, 1)
-
-	go func() {
-		done <- c.List("", "*", mboxChan)
-	}()
-
-	for m := range mboxChan {
-		if !strings.EqualFold(m.Name, ignoreFolder) {
-			mailboxes = append(mailboxes, m)
-		}
-	}
-
-	if err := <-done; err != nil {
-		return fmt.Errorf("falha ao listar as caixas de email: %w", err)
-	}
-
-	for _, mbox := range mailboxes {
-		if err := processMailbox(c, mbox, cfg, conn, u); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func processMailbox(c *client.Client, mbox *imap.MailboxInfo, cfg config.Config, conn *sql.DB, u db.UsuarioEmail) error {
