@@ -49,7 +49,6 @@ func main() {
 		log.SetOutput(writerAdaptador)
 
 		// Caminho de execução como SERVIÇO do Windows
-		log.Println("iniciando em modo de serviço...")
 		if err := svc.Run(serviceName, &coletorService{}); err != nil {
 			log.Fatalf("falha ao rodar o serviço '%s': %v", serviceName, err)
 		}
@@ -57,7 +56,6 @@ func main() {
 	}
 
 	// Caminho de execução INTERATIVO (no terminal)
-	log.Println("rodando em modo interativo (terminal)...")
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Lógica de captura de sinal (Ctrl+C) para o modo interativo
@@ -87,7 +85,6 @@ func (s *coletorService) Execute(args []string, r <-chan svc.ChangeRequest, chan
 	go runApplication(ctx)
 
 	changes <- svc.Status{State: svc.Running, Accepts: cmdsAccepted}
-	log.Printf("serviço '%s' iniciado com sucesso.", serviceName)
 
 	// Loop para aguardar comandos do SCM do Windows
 	for {
@@ -98,12 +95,10 @@ func (s *coletorService) Execute(args []string, r <-chan svc.ChangeRequest, chan
 			changes <- c.CurrentStatus
 		case svc.Stop, svc.Shutdown:
 			// O Windows pediu para o serviço parar.
-			log.Printf("comando de parada recebido do SCM...")
 			changes <- svc.Status{State: svc.StopPending}
 			cancel() // Sinaliza para as goroutines pararem
 			// Espera um pouco para o desligamento gracioso acontecer
 			time.Sleep(5 * time.Second)
-			log.Println("serviço parado.")
 			return
 		default:
 			log.Printf("comando inesperado do SCM: %d", c)
@@ -120,7 +115,6 @@ func (w *eventLogWriter) Write(b []byte) (int, error) {
 }
 
 func runApplication(ctx context.Context) {
-	log.Println("carregando configuração e conectando ao banco...")
 	cfg := config.LoadEnv()
 	dbConn, err := db.ConnectOracle(cfg)
 	if err != nil {
@@ -164,21 +158,11 @@ func runMonitoring(ctx context.Context, cfg config.Config, dbConn *sql.DB) error
 		}(user)
 	}
 
-	if cfg.Debug {
-		log.Println("aguardando todas as rotinas de monitoramento encerrarem...")
-	}
 	wg.Wait()
-	if cfg.Debug {
-		log.Println("todas as rotinas de monitoramento foram encerradas.")
-	}
 	return nil
 }
 
 func monitorUser(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.DB) {
-	if cfg.Debug {
-		log.Printf("iniciando worker para o usuário: %s", u.Usuario)
-	}
-
 	switch u.Protocolo {
 	case "I":
 		email.MonitorarIMAP(ctx, u, cfg, conn)
@@ -188,9 +172,5 @@ func monitorUser(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn
 		if cfg.Debug {
 			log.Printf("protocolo não reconhecido para %s. Encerrando worker.", u.Usuario)
 		}
-	}
-
-	if cfg.Debug {
-		log.Printf("Worker para o usuário %s foi encerrado graciosamente.", u.Usuario)
 	}
 }

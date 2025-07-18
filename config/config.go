@@ -15,6 +15,7 @@ type Config struct {
 	DBHost     string
 	DBPort     int
 	DBService  string
+	DBSid      string
 	DBUser     string
 	DBPassword string
 }
@@ -55,6 +56,7 @@ func LoadEnv() Config {
 		DBHost:     os.Getenv("DB_HOST"),
 		DBPort:     port,
 		DBService:  os.Getenv("DB_SERVICE"),
+		DBSid:      os.Getenv("DB_SID"),
 		DBUser:     os.Getenv("DB_USER"),
 		DBPassword: os.Getenv("DB_PASSWORD"),
 	}

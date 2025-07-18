@@ -23,10 +23,6 @@ const (
 )
 
 func MonitorarPOP3(ctx context.Context, u db.UsuarioEmail, cfg config.Config, conn *sql.DB) {
-	if cfg.Debug {
-		log.Printf("Iniciando monitoramento POP3 para %s em intervalos de %v", u.Usuario, pollInterval)
-	}
-
 	// O Ticker controla o intervalo de polling.
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -38,7 +34,7 @@ func MonitorarPOP3(ctx context.Context, u db.UsuarioEmail, cfg config.Config, co
 		select {
 		case <-ctx.Done():
 			if cfg.Debug {
-				log.Printf("Encerrando monitoramento POP3 para %s devido ao cancelamento do contexto.", u.Usuario)
+				log.Printf("[%s] encerrando monitoramento POP3 devido ao cancelamento do contexto.", u.Usuario)
 			}
 			return
 		case <-ticker.C:
@@ -59,27 +55,20 @@ func runPOP3PollingCycle(ctx context.Context, u db.UsuarioEmail, cfg config.Conf
 			return
 		}
 
-		if cfg.Debug {
-			log.Printf("Iniciando ciclo de verificação POP3 para %s...", u.Usuario)
-		}
 		err := processAllPOP3Messages(ctx, u, cfg, conn)
 		if err == nil {
-			if cfg.Debug {
-				log.Printf("Ciclo de verificação POP3 para %s concluído com sucesso.", u.Usuario)
-			}
 			return // Ciclo bem-sucedido, sai da função e aguarda o próximo tick.
 		}
 
 		// Se o erro for irrecuperável, logamos e paramos de tentar para este usuário.
-		// NOTA: Em uma arquitetura multi-usuário, isso pararia apenas a goroutine deste usuário.
 		if shouldStop(err) {
 			if cfg.Debug {
-				log.Printf("Erro irrecuperável para %s: %v", u.Usuario, err)
+				log.Printf("[%s] erro irrecuperável: %v", u.Usuario, err)
 			}
 		}
 
 		if cfg.Debug {
-			log.Printf("Erro no ciclo POP3 para %s: %v. Próxima tentativa em %v", u.Usuario, err, retryDelay)
+			log.Printf("[%s] erro no ciclo POP3: %v. Próxima tentativa em %v", u.Usuario, err, retryDelay)
 		}
 
 		// Espera antes de tentar novamente, respeitando o cancelamento.
@@ -118,14 +107,7 @@ func processAllPOP3Messages(ctx context.Context, u db.UsuarioEmail, cfg config.C
 	}
 
 	if len(msgs) == 0 {
-		if cfg.Debug {
-			log.Printf("Nenhuma mensagem nova para %s.", u.Usuario)
-		}
 		return nil
-	}
-
-	if cfg.Debug {
-		log.Printf("Encontradas %d novas mensagens para %s.", len(msgs), u.Usuario)
 	}
 
 	var lastErr error
@@ -138,7 +120,7 @@ func processAllPOP3Messages(ctx context.Context, u db.UsuarioEmail, cfg config.C
 		rawMsg, err := conn.RetrRaw(msg.ID)
 		if err != nil {
 			if cfg.Debug {
-				log.Printf("Erro ao obter mensagem POP3 %d para %s: %v", msg.ID, u.Usuario, err)
+				log.Printf("[%s] erro ao obter mensagem POP3 %d: %v", u.Usuario, msg.ID, err)
 			}
 			lastErr = err // Guarda o último erro, mas continua tentando outras mensagens.
 			continue
@@ -147,7 +129,7 @@ func processAllPOP3Messages(ctx context.Context, u db.UsuarioEmail, cfg config.C
 		m, err := mail.ReadMessage(rawMsg)
 		if err != nil {
 			if cfg.Debug {
-				log.Printf("Erro ao parsear mensagem POP3 %d para %s: %v", msg.ID, u.Usuario, err)
+				log.Printf("[%s] erro ao parsear mensagem POP3 %d: %v", u.Usuario, msg.ID, err)
 			}
 			lastErr = err
 			continue
@@ -156,7 +138,7 @@ func processAllPOP3Messages(ctx context.Context, u db.UsuarioEmail, cfg config.C
 		// Reutiliza a mesma lógica de processamento do IMAP.
 		if err := ProcessarMensagem(m, dbConn, cfg, u); err != nil {
 			if cfg.Debug {
-				log.Printf("Erro ao processar conteúdo da mensagem POP3 %d para %s: %v", msg.ID, u.Usuario, err)
+				log.Printf("[%s] erro ao processar conteúdo da mensagem POP3 %d: %v", u.Usuario, msg.ID, err)
 			}
 			lastErr = err
 			continue // Pula para a próxima mensagem, não deleta a que falhou.
@@ -166,13 +148,13 @@ func processAllPOP3Messages(ctx context.Context, u db.UsuarioEmail, cfg config.C
 		if !cfg.Simulation {
 			if err := conn.Dele(msg.ID); err != nil {
 				if cfg.Debug {
-					log.Printf("Erro ao deletar mensagem POP3 %d para %s: %v", msg.ID, u.Usuario, err)
+					log.Printf("[%s] erro ao deletar mensagem POP3 %d: %v", u.Usuario, msg.ID, err)
 				}
 				lastErr = err
 			}
 		} else {
 			if cfg.Debug {
-				log.Printf("[SIMULAÇÃO] Mensagem %d seria deletada para %s", msg.ID, u.Usuario)
+				log.Printf("[SIMULAÇÃO] [%s] Mensagem %d seria deletada", u.Usuario, msg.ID)
 			}
 		}
 	}
